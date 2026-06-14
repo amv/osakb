@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="osakb" />
+<meta name="theme-color" content="#15171c" />
+<link rel="apple-touch-icon" href="/icon-180.png" />
+<link rel="icon" type="image/png" href="/icon-180.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<title>osakb · remote keyboard</title>
+<script>
+/*
+ * Pure-JS SHA-256 with a Web Crypto fast path.
+ *
+ * Why this exists: `crypto.subtle` (Web Crypto) is only available in a "secure
+ * context" — HTTPS or localhost. osakb is served over plain HTTP on the LAN
+ * (e.g. http://host.local:8765), where `crypto.subtle` is undefined. So we use
+ * the native implementation when it's available and fall back to this pure-JS
+ * one otherwise. Both expose the same async interface.
+ *
+ * Implements FIPS 180-4 SHA-256. Verified against NIST test vectors.
+ */
+(function (root) {
+  'use strict';
+
+  var K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+
+  function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+
+  // Synchronous pure-JS SHA-256. Input/output: Uint8Array (32 bytes out).
+  function sha256bytes(msg) {
+    var h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
+    var h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+
+    var l = msg.length;
+    var bitLen = l * 8;
+    var withOne = l + 1;
+    var pad = (56 - (withOne % 64) + 64) % 64;
+    var total = withOne + pad + 8;
+    var buf = new Uint8Array(total);
+    buf.set(msg, 0);
+    buf[l] = 0x80;
+    // 64-bit big-endian bit length (split to stay within 32-bit ops)
+    var hi = Math.floor(bitLen / 0x100000000);
+    var lo = bitLen >>> 0;
+    buf[total - 8] = (hi >>> 24) & 0xff; buf[total - 7] = (hi >>> 16) & 0xff;
+    buf[total - 6] = (hi >>> 8) & 0xff;  buf[total - 5] = hi & 0xff;
+    buf[total - 4] = (lo >>> 24) & 0xff; buf[total - 3] = (lo >>> 16) & 0xff;
+    buf[total - 2] = (lo >>> 8) & 0xff;  buf[total - 1] = lo & 0xff;
+
+    var w = new Int32Array(64);
+    for (var off = 0; off < total; off += 64) {
+      for (var i = 0; i < 16; i++) {
+        w[i] = (buf[off + i * 4] << 24) | (buf[off + i * 4 + 1] << 16) |
+               (buf[off + i * 4 + 2] << 8) | (buf[off + i * 4 + 3]);
+      }
+      for (i = 16; i < 64; i++) {
+        var x15 = w[i - 15], x2 = w[i - 2];
+        var s0 = rotr(x15, 7) ^ rotr(x15, 18) ^ (x15 >>> 3);
+        var s1 = rotr(x2, 17) ^ rotr(x2, 19) ^ (x2 >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+      }
+
+      var a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+      for (i = 0; i < 64; i++) {
+        var S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        var ch = (e & f) ^ (~e & g);
+        var t1 = (h + S1 + ch + K[i] + w[i]) | 0;
+        var S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        var maj = (a & b) ^ (a & c) ^ (b & c);
+        var t2 = (S0 + maj) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+      h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+    }
+
+    var out = new Uint8Array(32);
+    var hs = [h0, h1, h2, h3, h4, h5, h6, h7];
+    for (i = 0; i < 8; i++) {
+      out[i * 4] = (hs[i] >>> 24) & 0xff; out[i * 4 + 1] = (hs[i] >>> 16) & 0xff;
+      out[i * 4 + 2] = (hs[i] >>> 8) & 0xff; out[i * 4 + 3] = hs[i] & 0xff;
+    }
+    return out;
+  }
+
+  function toBytes(input) {
+    if (input instanceof Uint8Array) return input;
+    if (typeof input === 'string') {
+      if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(input);
+      // Minimal UTF-8 encoder fallback (very old engines).
+      var utf8 = unescape(encodeURIComponent(input));
+      var arr = new Uint8Array(utf8.length);
+      for (var i = 0; i < utf8.length; i++) arr[i] = utf8.charCodeAt(i);
+      return arr;
+    }
+    throw new TypeError('sha256: expected string or Uint8Array');
+  }
+
+  function toHex(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += (bytes[i] + 0x100).toString(16).slice(1);
+    return s;
+  }
+
+  var nativeSubtle = (typeof root.crypto !== 'undefined' && root.crypto && root.crypto.subtle)
+    ? root.crypto.subtle : null;
+
+  // Unified async digest: native Web Crypto when available, else pure JS.
+  // Returns a Promise<Uint8Array>.
+  function digest(input) {
+    var bytes = toBytes(input);
+    if (nativeSubtle) {
+      return nativeSubtle.digest('SHA-256', bytes)
+        .then(function (buf) { return new Uint8Array(buf); })
+        .catch(function () { return sha256bytes(bytes); });
+    }
+    return Promise.resolve(sha256bytes(bytes));
+  }
+
+  function hex(input) {
+    return digest(input).then(toHex);
+  }
+
+  root.SHA256 = {
+    digest: digest,        // async -> Uint8Array
+    hex: hex,              // async -> hex string
+    bytes: sha256bytes,    // sync pure-JS -> Uint8Array
+    toHex: toHex,
+    toBytes: toBytes,
+    usingNative: !!nativeSubtle
+  };
+})(typeof self !== 'undefined' ? self : this);
+</script>
+<script>
+/*
+ * Pure-JS ChaCha20 stream cipher (RFC 8439). Verified against the RFC test
+ * vector. Used to encrypt keystroke payloads (crypto.subtle is unavailable on
+ * plain-HTTP LAN pages). Confidentiality only — authentication is HMAC-SHA256
+ * (encrypt-then-MAC). Never reuse a (key, nonce) pair: a fresh random nonce is
+ * used per message.
+ */
+(function (root) {
+  'use strict';
+
+  function rotl32(x, n) { return ((x << n) | (x >>> (32 - n))) >>> 0; }
+
+  function quarter(x, a, b, c, d) {
+    x[a] = (x[a] + x[b]) >>> 0; x[d] = rotl32(x[d] ^ x[a], 16);
+    x[c] = (x[c] + x[d]) >>> 0; x[b] = rotl32(x[b] ^ x[c], 12);
+    x[a] = (x[a] + x[b]) >>> 0; x[d] = rotl32(x[d] ^ x[a], 8);
+    x[c] = (x[c] + x[d]) >>> 0; x[b] = rotl32(x[b] ^ x[c], 7);
+  }
+
+  function block(key32, counter, nonce32, out) {
+    var s = [
+      0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+      key32[0], key32[1], key32[2], key32[3],
+      key32[4], key32[5], key32[6], key32[7],
+      counter >>> 0, nonce32[0], nonce32[1], nonce32[2]
+    ];
+    var x = s.slice(0);
+    for (var i = 0; i < 10; i++) {
+      quarter(x, 0, 4, 8, 12); quarter(x, 1, 5, 9, 13);
+      quarter(x, 2, 6, 10, 14); quarter(x, 3, 7, 11, 15);
+      quarter(x, 0, 5, 10, 15); quarter(x, 1, 6, 11, 12);
+      quarter(x, 2, 7, 8, 13); quarter(x, 3, 4, 9, 14);
+    }
+    for (i = 0; i < 16; i++) {
+      var v = (x[i] + s[i]) >>> 0;
+      out[i * 4] = v & 0xff; out[i * 4 + 1] = (v >>> 8) & 0xff;
+      out[i * 4 + 2] = (v >>> 16) & 0xff; out[i * 4 + 3] = (v >>> 24) & 0xff;
+    }
+  }
+
+  function toWords(b) {
+    var w = new Uint32Array(b.length >> 2);
+    for (var i = 0; i < w.length; i++) {
+      w[i] = ((b[i * 4]) | (b[i * 4 + 1] << 8) | (b[i * 4 + 2] << 16) | (b[i * 4 + 3] << 24)) >>> 0;
+    }
+    return w;
+  }
+
+  // XOR data with the ChaCha20 keystream (encrypt == decrypt).
+  function xor(key, nonce, counter, data) {
+    var key32 = toWords(key);
+    var nonce32 = toWords(nonce);
+    var out = new Uint8Array(data.length);
+    var ks = new Uint8Array(64);
+    var c = counter >>> 0;
+    for (var off = 0; off < data.length; off += 64) {
+      block(key32, c, nonce32, ks);
+      c = (c + 1) >>> 0;
+      var n = Math.min(64, data.length - off);
+      for (var i = 0; i < n; i++) out[off + i] = data[off + i] ^ ks[i];
+    }
+    return out;
+  }
+
+  root.ChaCha20 = { xor: xor };
+})(typeof self !== 'undefined' ? self : this);
+</script>
+<style>
+  :root {
+    --bg: #15171c;
+    --panel: #20242c;
+    --key: #2c313b;
+    --key-active: #3d8bfd;
+    --key-special: #353b46;
+    --mod-on: #c9a227;
+    --text: #e9edf3;
+    --muted: #8b93a1;
+    --gap: 6px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  body { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+    /* extra top padding so the iOS status bar / notch doesn't cover the row
+       when launched full-screen from the home screen */
+    padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+    background: var(--panel);
+  }
+  nav button {
+    flex: 1;
+    padding: 10px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--key-special);
+    color: var(--text);
+    font-size: 14px;
+  }
+  nav button.active { background: var(--key-active); }
+
+  /* error banner under the tabs (only shown when something fails) */
+  #errbar {
+    padding: 8px calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+    background: #4a1f25;
+    color: #ffd7db;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .view { padding: 0 8px; }
+  .hidden { display: none; }
+
+  .row { display: flex; gap: var(--gap); margin-bottom: var(--gap); }
+  .key {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 52px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--key);
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 52px;
+    padding: 0;
+    text-align: center;
+    touch-action: manipulation;
+  }
+  .key:active, .key.flash { background: var(--key-active); }
+  .key.special { background: var(--key-special); font-size: 14px; }
+  .key.mod { background: var(--key-special); font-size: 13px; }
+  .key.mod.on { background: var(--mod-on); color: #1a1a1a; }
+  .key.wide { flex-grow: 1.6; }
+  .key.xwide { flex-grow: 2.6; }
+
+  /* ---- keyboard tab: special keys + native-keyboard capture ---- */
+  .kb-special { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--gap); }
+  .kb-special .key.special { font-size: 13px; }
+  .kb-special .key.arrow { font-size: 18px; }
+  .kb-capture {
+    width: 100%;
+    height: 52px;
+    margin-bottom: 10px;
+    resize: none;
+    overflow: hidden;
+    border: 1px dashed #3a4150;
+    border-radius: 10px;
+    background: var(--key);
+    /* the field's own text is irrelevant (we cancel every edit) — hide it but
+       keep a visible caret so it's obviously "live" while focused */
+    color: transparent;
+    caret-color: var(--key-active);
+    font-size: 16px;
+    line-height: 24px;
+    padding: 13px 14px;
+    outline: none;
+    -webkit-user-select: text; user-select: text;
+  }
+  .kb-capture::placeholder { color: var(--muted); }
+  .kb-capture:focus { border-style: solid; border-color: var(--key-active); }
+
+  /* ---- mouse tab ---- */
+  .mouse-top { display: flex; align-items: center; gap: 10px; padding: 4px 4px 10px; }
+  .mouse-top span { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .mouse-top input[type=range] { flex: 1; }
+  .mouse-body { display: flex; gap: var(--gap); height: 58vh; }
+  .trackpad {
+    flex: 1; min-width: 0;
+    background: var(--key); border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; text-align: center;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+  }
+  .scrollstrip {
+    width: 60px; flex: 0 0 60px;
+    background: var(--key); border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 12px;
+    writing-mode: vertical-rl; letter-spacing: 2px;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+  }
+  .trackpad.active, .scrollstrip.active { background: var(--key-special); }
+  .mouse-bottom { display: flex; gap: var(--gap); padding-top: 10px; }
+  .mouse-bottom button {
+    flex: 1; height: 64px; border: 0; border-radius: 12px;
+    background: var(--key-special); color: var(--text); font-size: 16px;
+  }
+  .mouse-bottom button:active { background: var(--key-active); }
+
+  .overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .overlay .box {
+    background: var(--panel); border-radius: 12px; padding: 20px;
+    max-width: 420px; width: 100%;
+  }
+  .overlay h2 { margin: 0 0 8px; font-size: 18px; }
+  .overlay p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+  .overlay input {
+    width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 12px;
+    border: 1px solid #3a4150; border-radius: 8px;
+    background: var(--key); color: var(--text); font-size: 16px;
+  }
+  .overlay button {
+    width: 100%; padding: 14px; border: 0; border-radius: 8px;
+    background: var(--key-active); color: #fff; font-size: 16px; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<nav>
+  <button id="tab-mouse" class="active" type="button">Mouse</button>
+  <button id="tab-kb" type="button">Keyboard</button>
+</nav>
+<div id="errbar" class="hidden"></div>
+
+<div id="view-mouse" class="view">
+  <div class="mouse-top">
+    <span>Speed</span>
+    <input id="sens" type="range" min="0.5" max="6" step="0.5" value="2.5" />
+  </div>
+  <div class="mouse-body">
+    <div id="trackpad" class="trackpad">drag here to move &middot; tap to click</div>
+    <div id="scrollstrip" class="scrollstrip">scroll</div>
+  </div>
+  <div class="mouse-bottom">
+    <button id="btn-left" type="button">Left click</button>
+    <button id="btn-right" type="button">Right click</button>
+  </div>
+</div>
+<div id="view-kb" class="view hidden">
+  <textarea id="kb-capture" class="kb-capture" rows="1"
+    autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+    placeholder="Tap here to send typed chars"></textarea>
+  <div id="kb-special" class="kb-special"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // We track status internally but render nothing except errors: on an error the
+  // message shows in a bar under the tabs; any non-error state clears it.
+  // cls: 'ok' | 'err' | 'busy' | ''. `status` is kept for debugging/inspection.
+  var errEl = document.getElementById('errbar');
+  var status = 'idle';
+  function setStatus(msg, cls) {
+    status = (cls === 'ok' || cls === 'err' || cls === 'busy') ? cls : 'idle';
+    if (status === 'err') {
+      errEl.textContent = msg || 'error';
+      errEl.classList.remove('hidden');
+    } else {
+      errEl.textContent = '';
+      errEl.classList.add('hidden');
+    }
+  }
+
+  // ---- auth: shared secret + HMAC-SHA256 + nonce/counter ----
+  var SECRET_KEY = 'osakb_secret';
+
+  // Acquire the secret: from the URL fragment (#… set by the QR/link, never sent
+  // to the server), else from localStorage, else prompt the user to paste it.
+  function loadSecret() {
+    if (location.hash && location.hash.length > 1) {
+      var s = decodeURIComponent(location.hash.slice(1));
+      if (s) {
+        try { localStorage.setItem(SECRET_KEY, s); } catch (e) {}
+        // NOTE: we intentionally leave the #fragment in the URL. iOS "Add to
+        // Home Screen" saves the current URL as the app's launch URL, so keeping
+        // the secret in the fragment lets the installed (separately-sandboxed)
+        // app auto-authenticate instead of prompting. (It stays out of network
+        // requests, but does remain in Safari's address bar / history.)
+        return s;
+      }
+    }
+    try { return localStorage.getItem(SECRET_KEY) || null; } catch (e) { return null; }
+  }
+  var secret = loadSecret();
+
+  // Derive separate encryption + MAC subkeys from the secret (never share a key
+  // between cipher and MAC). Recomputed whenever the secret changes.
+  var encKey = null, macKey = null;
+  function deriveKeys() {
+    if (!secret) { encKey = macKey = null; return; }
+    encKey = SHA256.bytes(SHA256.toBytes('osakb-enc:' + secret));
+    macKey = SHA256.bytes(SHA256.toBytes('osakb-mac:' + secret));
+  }
+  deriveKeys();
+
+  function concatBytes(a, b) {
+    var c = new Uint8Array(a.length + b.length);
+    c.set(a, 0); c.set(b, a.length);
+    return c;
+  }
+
+  // HMAC-SHA256(key, msg) -> hex, built on the inlined SHA256 (works without
+  // crypto.subtle). key may be a string or Uint8Array. Payloads are tiny, so the
+  // pure-JS path is plenty fast.
+  function hmacHex(keyInput, msgStr) {
+    var key = SHA256.toBytes(keyInput);
+    if (key.length > 64) key = SHA256.bytes(key);
+    var k = new Uint8Array(64); k.set(key);
+    var ikp = new Uint8Array(64), okp = new Uint8Array(64);
+    for (var i = 0; i < 64; i++) { ikp[i] = k[i] ^ 0x36; okp[i] = k[i] ^ 0x5c; }
+    var inner = SHA256.bytes(concatBytes(ikp, SHA256.toBytes(msgStr)));
+    return SHA256.toHex(SHA256.bytes(concatBytes(okp, inner)));
+  }
+
+  function randomBytes(n) {
+    var a = new Uint8Array(n);
+    var c = (typeof crypto !== 'undefined') ? crypto : null;
+    if (c && c.getRandomValues) c.getRandomValues(a); // available even on http
+    else for (var i = 0; i < n; i++) a[i] = (Math.random() * 256) | 0;
+    return a;
+  }
+
+  function b64(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+
+  var nonce = null, counter = 0;
+  function fetchNonce() {
+    return fetch('/nonce').then(function (r) { return r.json(); }).then(function (d) {
+      nonce = d.nonce; counter = 0; return nonce;
+    });
+  }
+  function ensureNonce() { return nonce ? Promise.resolve(nonce) : fetchNonce(); }
+
+  // Pad the UTF-8 plaintext to a multiple of PAD_BLOCK bytes (with spaces, which
+  // JSON.parse ignores) so every ciphertext is a fixed/bucketed length. This
+  // hides whether a message is a single letter, a modifier combo, or a command —
+  // a stream cipher otherwise leaks plaintext length 1:1.
+  var PAD_BLOCK = 256;
+  function padPlaintext(jsonStr) {
+    var bytes = SHA256.toBytes(jsonStr); // UTF-8
+    var target = Math.ceil((bytes.length + 1) / PAD_BLOCK) * PAD_BLOCK;
+    var out = new Uint8Array(target);
+    out.set(bytes, 0);
+    for (var i = bytes.length; i < target; i++) out[i] = 0x20; // ' '
+    return out;
+  }
+
+  // Encrypt + authenticate a BATCH of operations and POST it to /msg.
+  // Plaintext = {n: authNonce, c: counter, o: [ops]} — nonce and counter live
+  // INSIDE the ciphertext. Fresh random cipher-nonce per message + fixed-length
+  // padding means an observer can't correlate, size, or count keystrokes.
+  // Wire envelope = { iv, ct, mac } with mac = HMAC(macKey, "POST\n/msg\niv\nct").
+  function sendEncrypted(ops, isRetry) {
+    return ensureNonce().then(function () {
+      counter += 1;
+      var plain = JSON.stringify({ n: nonce, c: counter, o: ops });
+      var iv = randomBytes(12);
+      var ct = ChaCha20.xor(encKey, iv, 1, padPlaintext(plain));
+      var ivB = b64(iv), ctB = b64(ct);
+      var mac = hmacHex(macKey, 'POST\n/msg\n' + ivB + '\n' + ctB);
+      setStatus('sending', 'busy');
+      return fetch('/msg', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ iv: ivB, ct: ctB, mac: mac })
+      });
+    }).then(function (res) {
+      if (res.status === 401 && !isRetry) {
+        // nonce expired or server restarted — get a fresh nonce and retry once
+        nonce = null;
+        return sendEncrypted(ops, true);
+      }
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) setStatus(data.error || ('HTTP ' + res.status), 'err');
+        else setStatus('sent', 'ok');
+      });
+    }).catch(function () { setStatus('offline', 'err'); });
+  }
+
+  // Serialize sends so counters always arrive in increasing order (the server
+  // rejects out-of-order counters as replays).
+  var sendQueue = Promise.resolve();
+  function flushBatch(ops) {
+    sendQueue = sendQueue.then(function () {
+      return sendEncrypted(ops, false);
+    }, function () {});
+    return sendQueue;
+  }
+
+  // Quantize sends to a fixed time grid: buffer ops and flush on a timer instead
+  // of firing the instant a key is pressed. This batches bursts into one request,
+  // coalesces mouse-move/scroll deltas (so a drag is a few summed moves, not
+  // dozens of messages), and blurs precise inter-keystroke timing (a known side
+  // channel). Light touch — true timing privacy would need constant-rate cover.
+  var FLUSH_MS = 50;
+  var opQueue = [];
+  var pendMove = { dx: 0, dy: 0 };
+  var pendScroll = { dy: 0 };
+  var flushTimer = null;
+
+  function scheduleFlush() {
+    if (!flushTimer) flushTimer = setTimeout(doFlush, FLUSH_MS);
+  }
+  function doFlush() {
+    flushTimer = null;
+    var batch = [];
+    if (pendMove.dx || pendMove.dy) {
+      batch.push({ t: 'm', k: 'mv', dx: Math.round(pendMove.dx), dy: Math.round(pendMove.dy) });
+      pendMove.dx = 0; pendMove.dy = 0;
+    }
+    if (pendScroll.dy) {
+      batch.push({ t: 'm', k: 'sc', dy: Math.round(pendScroll.dy) });
+      pendScroll.dy = 0;
+    }
+    if (opQueue.length) { batch = batch.concat(opQueue); opQueue = []; }
+    if (batch.length) flushBatch(batch);
+  }
+
+  function haveSecret() {
+    if (secret) return true;
+    setStatus('no secret', 'err');
+    showSecretPrompt();
+    return false;
+  }
+
+  // Discrete ops (keys, clicks).
+  function sendOp(op) {
+    if (!haveSecret()) return;
+    opQueue.push(op);
+    scheduleFlush();
+  }
+  // Coalesced relative mouse movement / scrolling.
+  function moveMouse(dx, dy) {
+    if (!secret) return;
+    pendMove.dx += dx; pendMove.dy += dy;
+    scheduleFlush();
+  }
+  function scrollMouse(dy) {
+    if (!secret) return;
+    pendScroll.dy += dy;
+    scheduleFlush();
+  }
+  function clickMouse(btn) { sendOp({ t: 'm', k: 'cl', btn: btn }); }
+  // Press-and-hold buttons: button-down on press, button-up on release. While a
+  // button is held the server turns trackpad moves into drags, so press a button,
+  // drag on the trackpad with another finger, release to drop.
+  function downMouse(btn) { sendOp({ t: 'm', k: 'dn', btn: btn }); }
+  function upMouse(btn) { sendOp({ t: 'm', k: 'up', btn: btn }); }
+
+  // ---- manual secret entry (fallback when no QR/hash and nothing stored) ----
+  var secretPromptShown = false;
+  function showSecretPrompt() {
+    if (secretPromptShown) return;
+    secretPromptShown = true;
+    var ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML =
+      '<div class="box">' +
+      '<h2>Enter osakb secret</h2>' +
+      '<p>Scan the QR the server printed, or paste the secret (or the full URL) below.</p>' +
+      '<input id="secret-input" type="text" autocomplete="off" autocapitalize="off" ' +
+      'autocorrect="off" spellcheck="false" placeholder="secret or http://…/#secret" />' +
+      '<button id="secret-save" type="button">Save</button>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var input = ov.querySelector('#secret-input');
+    function save() {
+      var v = input.value.trim();
+      if (v.indexOf('#') >= 0) v = v.slice(v.lastIndexOf('#') + 1);
+      v = v.trim();
+      if (!v) return;
+      try { localStorage.setItem(SECRET_KEY, v); } catch (e) {}
+      secret = v; nonce = null; deriveKeys();
+      document.body.removeChild(ov);
+      secretPromptShown = false;
+      setStatus('secret saved', 'ok');
+      fetchNonce().catch(function () {});
+    }
+    ov.querySelector('#secret-save').addEventListener('click', save);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); });
+    input.focus();
+  }
+
+  // ---- latching modifiers (held until tapped again) ----
+  var mods = { command: false, option: false, control: false, shift: false };
+  function activeMods() {
+    return Object.keys(mods).filter(function (m) { return mods[m]; });
+  }
+  function hasCase(ch) {
+    return ch.toLowerCase() !== ch.toUpperCase();
+  }
+  function refreshMods() {
+    var modKeys = document.querySelectorAll('.key.mod');
+    for (var i = 0; i < modKeys.length; i++) {
+      modKeys[i].classList.toggle('on', !!mods[modKeys[i].dataset.mod]);
+    }
+    var charKeys = document.querySelectorAll('.key[data-char]');
+    for (var j = 0; j < charKeys.length; j++) {
+      var ch = charKeys[j].dataset.char;
+      if (hasCase(ch)) charKeys[j].textContent = mods.shift ? ch.toUpperCase() : ch.toLowerCase();
+    }
+  }
+
+  function sendKey_(body) { sendOp({ t: 'k', b: body }); }
+
+  function sendChar(ch) {
+    var m = activeMods();
+    var others = m.filter(function (x) { return x !== 'shift'; });
+    if (others.length > 0) {
+      sendKey_({ text: hasCase(ch) ? ch.toLowerCase() : ch, modifiers: m });
+    } else if (mods.shift && hasCase(ch)) {
+      sendKey_({ text: ch.toUpperCase() });
+    } else {
+      sendKey_({ text: ch });
+    }
+  }
+
+  function sendKey(name) {
+    var m = activeMods();
+    sendKey_(m.length ? { key: name, modifiers: m } : { key: name });
+  }
+
+  function flash(btn) {
+    btn.classList.add('flash');
+    setTimeout(function () { btn.classList.remove('flash'); }, 120);
+  }
+
+  // Reliable tap handling: fire on touchstart for instant response on iOS,
+  // and suppress the synthesized click so it doesn't double-fire. Falls back
+  // to click on non-touch devices.
+  function onTap(el, fn) {
+    var usedTouch = false;
+    el.addEventListener('touchstart', function (e) {
+      usedTouch = true;
+      e.preventDefault();
+      fn();
+    }, { passive: false });
+    el.addEventListener('click', function () {
+      if (usedTouch) { usedTouch = false; return; }
+      fn();
+    });
+  }
+
+  // Press-and-hold: `down` on press, `up` on release (or cancel). Tracks a single
+  // active press so touch + synthesized mouse events don't double-fire, and a
+  // missed touchend (touchcancel, or releasing off-element on desktop) still ups.
+  function onHold(el, down, up) {
+    var active = false;
+    function start(e) { if (e) e.preventDefault(); if (active) return; active = true; down(); }
+    function end(e) { if (e) e.preventDefault(); if (!active) return; active = false; up(); }
+    el.addEventListener('touchstart', start, { passive: false });
+    el.addEventListener('touchend', end, { passive: false });
+    el.addEventListener('touchcancel', end, { passive: false });
+    el.addEventListener('mousedown', start);
+    window.addEventListener('mouseup', function () { end(); });
+  }
+
+  // ---- on-screen special keys (modifiers, navigation, editing) ----
+  // The letters/symbols themselves come from the phone's NATIVE keyboard (see the
+  // capture field below); this bar only adds the keys a phone keyboard lacks.
+  // Items: { label, mod } modifier toggle (latches), or { label, key } special
+  // key (see keys.js), plus optional { cls } CSS classes.
+  // Laid out on a 6-column grid (c = column 1-6, r = row). Left half (c1-3) is
+  // esc/tab/backspace then the latching modifiers; right half (c4-6) mirrors the
+  // Mac nav cluster above the arrows (🌐/Home/PgUp · ⌦/End/PgDn) with the arrow
+  // keys as triangles in their inverted-T below.
+  var KB_GRID = [
+    { label:'⎋', key:'escape',       cls:'special', c:1, r:1 },
+    { label:'⇥', key:'tab',          cls:'special', c:2, r:1 },
+    { label:'⌫', key:'backspace',    cls:'special', c:3, r:1 },
+    { label:'⌘', mod:'command',      cls:'mod',     c:1, r:2 },
+    { label:'⌥', mod:'option',       cls:'mod',     c:2, r:2 },
+    { label:'⌃', mod:'control',      cls:'mod',     c:3, r:2 },
+    { label:'⇧', mod:'shift',        cls:'mod',     c:1, r:3 },
+
+    { label:'🌐', key:'globe',        cls:'special', c:4, r:1 },
+    { label:'Home', key:'home',      cls:'special', c:5, r:1 },
+    { label:'PgUp', key:'pageup',    cls:'special', c:6, r:1 },
+    { label:'⌦', key:'forwarddelete', cls:'special', c:4, r:2 },
+    { label:'End', key:'end',        cls:'special', c:5, r:2 },
+    { label:'PgDn', key:'pagedown',  cls:'special', c:6, r:2 },
+
+    { label:'▲', key:'up',    cls:'special arrow', c:5, r:3 },
+    { label:'◀', key:'left',  cls:'special arrow', c:4, r:4 },
+    { label:'▼', key:'down',  cls:'special arrow', c:5, r:4 },
+    { label:'▶', key:'right', cls:'special arrow', c:6, r:4 },
+  ];
+
+  function buildKey(item) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'key ' + (item.cls || '');
+    btn.textContent = item.label;
+    if (item.c) btn.style.gridColumn = item.c;
+    if (item.r) btn.style.gridRow = item.r;
+    if (item.mod) {
+      btn.dataset.mod = item.mod;
+      onTap(btn, function () { mods[item.mod] = !mods[item.mod]; refreshMods(); });
+    } else if (item.key) {
+      onTap(btn, function () { flash(btn); sendKey(item.key); });
+    }
+    return btn;
+  }
+
+  function buildKbSpecial() {
+    var host = document.getElementById('kb-special');
+    host.innerHTML = '';
+    for (var i = 0; i < KB_GRID.length; i++) host.appendChild(buildKey(KB_GRID[i]));
+    // Keep taps inside the bar from stealing focus from the capture field (which
+    // would dismiss the native keyboard). On touch, onTap already preventDefaults
+    // touchstart; this covers desktop mouse clicks.
+    host.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    refreshMods();
+  }
+
+  // ---- native-keyboard capture ----
+  // Rather than draw our own letter grid, we focus a text field so the phone's own
+  // keyboard pops up, and translate its edits into keystrokes. iOS soft keyboards
+  // don't fire reliable keydown events, so we read `beforeinput` (inputType + data)
+  // and cancel the edit so nothing accumulates in the field.
+  //
+  // The field is seeded with a few spaces and the caret pinned to the end, so a
+  // Backspace always has something to "delete" and therefore always emits a
+  // deleteContentBackward we can forward (an empty field emits nothing).
+  var capture = document.getElementById('kb-capture');
+  var CAPTURE_SEED = '    ';
+
+  function seedCapture() {
+    capture.value = CAPTURE_SEED;
+    try { capture.setSelectionRange(CAPTURE_SEED.length, CAPTURE_SEED.length); } catch (e) {}
+  }
+
+  // Forward typed text, honouring latched non-shift modifiers (so ⌘ then "c"
+  // becomes ⌘C). Native shift is already baked into the character's case, so with
+  // no modifier held we send the data verbatim — whole words from swipe-typing and
+  // predictive suggestions come through as one insertText and just work.
+  function typeText(data) {
+    var others = activeMods().filter(function (x) { return x !== 'shift'; });
+    if (others.length) {
+      for (var i = 0; i < data.length; i++) sendChar(data.charAt(i));
+    } else {
+      sendKey_({ text: data });
+    }
+  }
+
+  // A special key plus any latched modifiers, plus extra modifiers (e.g. ⌥ for the
+  // native "delete word" gesture -> option+backspace).
+  function sendKeyExtra(name, extra) {
+    var m = activeMods();
+    for (var i = 0; i < extra.length; i++) if (m.indexOf(extra[i]) < 0) m.push(extra[i]);
+    sendKey_(m.length ? { key: name, modifiers: m } : { key: name });
+  }
+
+  capture.addEventListener('focus', seedCapture);
+  capture.addEventListener('blur', function () { capture.value = ''; });
+
+  capture.addEventListener('beforeinput', function (e) {
+    var t = e.inputType || '';
+    if (t.indexOf('delete') === 0) {
+      if (t === 'deleteWordBackward') sendKeyExtra('backspace', ['option']);
+      else if (t === 'deleteWordForward') sendKeyExtra('forwarddelete', ['option']);
+      else if (t === 'deleteContentForward') sendKey('forwarddelete');
+      else sendKey('backspace');
+      e.preventDefault();
+    } else if (t === 'insertLineBreak' || t === 'insertParagraph') {
+      sendKey('return');
+      e.preventDefault();
+    } else if (e.data != null) {
+      typeText(e.data);
+      e.preventDefault();
+    }
+    // else: a dataless event (e.g. composition start) — let it ride; the input
+    // handler below re-seeds afterwards.
+  });
+
+  // Safety net: if any edit slipped past preventDefault, restore the seed so the
+  // field never drifts (which would break the Backspace trick).
+  capture.addEventListener('input', function () {
+    if (document.activeElement === capture && capture.value !== CAPTURE_SEED) seedCapture();
+  });
+
+  // Pin the caret to the end while the field is focused, so a Backspace always has
+  // a seed character in front of it even if the user taps into the field.
+  document.addEventListener('selectionchange', function () {
+    if (document.activeElement === capture && capture.selectionStart !== CAPTURE_SEED.length) {
+      try { capture.setSelectionRange(CAPTURE_SEED.length, CAPTURE_SEED.length); } catch (e) {}
+    }
+  });
+
+  // ---- mouse tab: drag to move, tap to click, side strip to scroll ----
+  var sens = document.getElementById('sens');
+  var sensitivity = Number(sens.value);
+  sens.addEventListener('input', function () { sensitivity = Number(sens.value); });
+
+  var SCROLL_SPEED = 1.2;
+  // Velocity-based acceleration for the scroll strip: a fast flick scrolls more
+  // than a slow drag over the same distance. The multiplier is 1 + GAIN*|v| (v in
+  // px/ms), capped, so slow drags stay precise (~1x) and quick flicks ramp up.
+  var SCROLL_ACCEL_GAIN = 1.8, SCROLL_ACCEL_MAX = 7;
+  var TAP_MOVE_PX = 8, TAP_MS = 250; // movement/time thresholds for tap-to-click
+
+  var trackpad = document.getElementById('trackpad');
+  var tLastX = 0, tLastY = 0, tStartX = 0, tStartY = 0, tStartT = 0, tMoved = 0;
+  trackpad.addEventListener('touchstart', function (e) {
+    e.preventDefault();
+    // targetTouches = touches that began on the trackpad, so holding a click
+    // button with another finger doesn't hijack the movement tracking.
+    var t = e.targetTouches[0] || e.touches[0];
+    tLastX = tStartX = t.clientX; tLastY = tStartY = t.clientY;
+    tStartT = Date.now(); tMoved = 0;
+    trackpad.classList.add('active');
+  }, { passive: false });
+  trackpad.addEventListener('touchmove', function (e) {
+    e.preventDefault();
+    var t = e.targetTouches[0] || e.touches[0];
+    var dx = t.clientX - tLastX, dy = t.clientY - tLastY;
+    tLastX = t.clientX; tLastY = t.clientY;
+    tMoved += Math.abs(dx) + Math.abs(dy);
+    moveMouse(dx * sensitivity, dy * sensitivity);
+  }, { passive: false });
+  trackpad.addEventListener('touchend', function (e) {
+    e.preventDefault();
+    trackpad.classList.remove('active');
+    // Quick tap with little movement = left click.
+    if (tMoved < TAP_MOVE_PX && (Date.now() - tStartT) < TAP_MS) clickMouse('l');
+  }, { passive: false });
+
+  var strip = document.getElementById('scrollstrip');
+  var sLastY = 0, sLastT = 0;
+  strip.addEventListener('touchstart', function (e) {
+    e.preventDefault();
+    sLastY = e.touches[0].clientY;
+    sLastT = Date.now();
+    strip.classList.add('active');
+  }, { passive: false });
+  strip.addEventListener('touchmove', function (e) {
+    e.preventDefault();
+    var now = Date.now();
+    var y = e.touches[0].clientY;
+    var dy = y - sLastY; sLastY = y;
+    var dt = now - sLastT; sLastT = now;
+    // Swipe speed scales the throw: faster finger -> larger accel multiplier.
+    var v = dt > 0 ? Math.abs(dy) / dt : 0; // px per ms
+    var accel = 1 + Math.min(v * SCROLL_ACCEL_GAIN, SCROLL_ACCEL_MAX);
+    // Drag down -> scroll content down (wheel-down is negative for CG).
+    scrollMouse(-dy * SCROLL_SPEED * accel);
+  }, { passive: false });
+  strip.addEventListener('touchend', function (e) {
+    e.preventDefault();
+    strip.classList.remove('active');
+  }, { passive: false });
+
+  onHold(document.getElementById('btn-left'),
+    function () { downMouse('l'); }, function () { upMouse('l'); });
+  onHold(document.getElementById('btn-right'),
+    function () { downMouse('r'); }, function () { upMouse('r'); });
+
+  // ---- tabs ----
+  var tabs = {
+    mouse: { btn: document.getElementById('tab-mouse'), view: document.getElementById('view-mouse') },
+    kb: { btn: document.getElementById('tab-kb'), view: document.getElementById('view-kb') }
+  };
+  function selectTab(name) {
+    for (var k in tabs) {
+      tabs[k].btn.classList.toggle('active', k === name);
+      tabs[k].view.classList.toggle('hidden', k !== name);
+    }
+    // Raise the native keyboard when entering the tab (best-effort — iOS may
+    // require the user to tap the field), and dismiss it when leaving.
+    if (name === 'kb') { try { capture.focus(); } catch (e) {} }
+    else { try { capture.blur(); } catch (e) {} }
+  }
+  onTap(tabs.mouse.btn, function () { selectTab('mouse'); });
+  onTap(tabs.kb.btn, function () { selectTab('kb'); });
+
+  buildKbSpecial(); // build the special-keys bar now (Mouse is the default tab)
+  if (secret) {
+    setStatus('ready');
+    fetchNonce().catch(function () {}); // warm up a nonce
+  } else {
+    setStatus('no secret', 'err');
+    showSecretPrompt();
+  }
+})();
+</script>
+</body>
+</html>

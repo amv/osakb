@@ -1,0 +1,17 @@
+{
+  "name": "osakb",
+  "version": "1.0.0",
+  "description": "Zero-dependency phone-as-keyboard server for macOS (sends keypresses via osascript).",
+  "main": "osakb.js",
+  "bin": {
+    "osakb": "osakb.js"
+  },
+  "scripts": {
+    "start": "node osakb.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT",
+  "private": true
+}
