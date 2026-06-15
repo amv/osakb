@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const { run } = require('./executor');
 const chacha20 = require('./chacha20');
 const mouse = require('./mouse');
@@ -18,16 +19,17 @@ const HOST = process.env.HOST || '0.0.0.0';
 // appended as the #fragment, never taken from here.
 //
 // The first positional arg selects a mode:
-//   node osakb.js wifi        -> Mac .local mDNS hostname (default)
-//   node osakb.js tailscale   -> bare machine hostname (resolves via Tailscale
-//                                MagicDNS / over the tailnet)
+//   node osakb.js detect      -> auto (default): Tailscale MagicDNS name if a
+//                                tailnet is up, else the Mac .local mDNS name
+//   node osakb.js wifi        -> Mac .local mDNS hostname
+//   node osakb.js tailscale   -> Tailscale MagicDNS name (over the tailnet)
 //   node osakb.js http://host:port/   -> use this URL verbatim (custom override,
 //                                e.g. a domain or port-forward)
 // Back-compat: the --url / --base-url flags and the OSAKB_URL env var still set
 // a custom override and take precedence over a mode.
 function parseInvocation() {
   let url = process.env.OSAKB_URL || null;
-  let mode = null; // 'wifi' | 'tailscale' | null (null => default = wifi)
+  let mode = null; // 'detect' | 'wifi' | 'tailscale' | null (null => 'detect')
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -35,10 +37,10 @@ function parseInvocation() {
     else if (a.startsWith('--url=')) url = a.slice('--url='.length);
     else if (a.startsWith('--base-url=')) url = a.slice('--base-url='.length);
     else if (a.startsWith('-')) continue; // ignore unknown flags
-    else if (a === 'wifi' || a === 'tailscale') mode = a;
+    else if (a === 'wifi' || a === 'tailscale' || a === 'detect') mode = a;
     else if (a.includes('://')) url = a; // bare URL positional => custom override
   }
-  return { url: url || null, mode };
+  return { url: url || null, mode: mode || 'detect' };
 }
 const { url: OVERRIDE_URL, mode: MODE } = parseInvocation();
 
@@ -315,6 +317,14 @@ const server = http.createServer(async (req, res) => {
   sendJSON(res, 405, { error: 'Method not allowed' });
 });
 
+// Docker's default bridge networks live in 172.16.0.0/12 (docker0 is usually
+// 172.17.0.1, compose networks 172.18+). These are almost never the address the
+// phone should reach, so we sort them to the back rather than dropping them.
+function isDockerIp(ip) {
+  const m = /^172\.(\d+)\./.exec(ip);
+  return m && Number(m[1]) >= 16 && Number(m[1]) <= 31;
+}
+
 function lanAddresses() {
   const out = new Set();
   const ifaces = os.networkInterfaces();
@@ -323,38 +333,86 @@ function lanAddresses() {
       if (iface.family === 'IPv4' && !iface.internal) out.add(iface.address);
     }
   }
-  return [...out];
+  // Prioritise real LAN addresses over Docker bridge IPs (kept, just last).
+  return [...out].sort((a, b) => isDockerIp(a) - isDockerIp(b));
 }
 
-// The Bonjour/mDNS hostname (e.g. "Anttis-MacBook-Pro.local"). Unlike the IP,
-// this survives the Mac getting a new DHCP lease, so it's the better address to
-// pin in a home-screen app.
+function sh(bin, args) {
+  try {
+    return execFileSync(bin, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// The Bonjour/mDNS hostname (e.g. "mac-air.local"). This is the LocalHostName
+// (`scutil --get LocalHostName`) — the name mDNS actually answers to. We do NOT
+// fall back to os.hostname(): that's the kernel HostName, set dynamically from
+// DHCP/reverse-DNS or the ComputerName, so it can be wrong (e.g. "MacbookAir")
+// or not even a valid .local label (e.g. "Mac Air"). If scutil has no answer
+// (non-macOS, or the early-boot window before LocalHostName is set), return null
+// and let the caller fall back to a LAN IP instead.
 function localHostname() {
-  const host = os.hostname();
-  if (!host) return null;
-  const short = host.split('.')[0]; // strip any existing domain suffix
-  return short + '.local';
+  if (process.platform !== 'darwin') return null;
+  const name = sh('scutil', ['--get', 'LocalHostName']);
+  return name ? name + '.local' : null;
 }
 
-// The bare machine hostname (e.g. "Anttis-MacBook-Pro"), with any domain suffix
-// stripped. On a tailnet with MagicDNS this resolves over Tailscale, so it's the
-// address to pin when reaching the Mac through the VPN rather than the LAN.
-function machineHostname() {
-  const host = os.hostname();
-  if (!host) return null;
-  return host.split('.')[0];
+// The Tailscale MagicDNS name (e.g. "mac-air.tailnet-xyz.ts.net"), read straight
+// from the Tailscale daemon — the authoritative source for the tailnet name,
+// which is decoupled from the OS hostname. Uses Self.DNSName (the FQDN, which
+// always resolves via MagicDNS regardless of the device's search domains).
+// Returns null if Tailscale isn't installed/running or no tailnet is up.
+function tailscaleHostname() {
+  const bins = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
+  for (const bin of bins) {
+    const out = sh(bin, ['status', '--json']);
+    if (!out) continue;
+    try {
+      const status = JSON.parse(out);
+      // When Tailscale is switched off the daemon still reports Self.DNSName, so
+      // skip it unless the tailnet is actually up.
+      if (status.BackendState === 'Stopped') continue;
+      const self = status.Self || {};
+      if (self.DNSName) return self.DNSName.replace(/\.$/, ''); // strip trailing dot
+      if (self.HostName) return self.HostName;
+    } catch {}
+  }
+  return null;
 }
 
-// The base URL to advertise: the custom override if given, else an address built
-// from the selected mode — `tailscale` uses the bare machine hostname, `wifi`
-// (the default) uses the .local mDNS name. Both fall back to a LAN IP, then
-// localhost.
-function baseUrl() {
-  if (OVERRIDE_URL) return OVERRIDE_URL;
-  const host = MODE === 'tailscale'
-    ? (machineHostname() || lanAddresses()[0] || 'localhost')
-    : (localHostname() || lanAddresses()[0] || 'localhost');
-  return `http://${host}:${PORT}/`;
+// Resolve the address to advertise into { url, kind, ips }, where kind is one of
+// 'custom' | 'tailscale' | 'local' | 'ip' | 'none' (used to tailor the startup
+// banner and warnings). `ips` is the list of auto-detected LAN IPv4 addresses,
+// only set for kind 'ip'. For 'none' there's no address to advertise (url null).
+//   tailscale -> MagicDNS name
+//   wifi      -> .local mDNS name
+//   detect    -> MagicDNS name if a tailnet is up, else the .local name
+// All hostname modes fall back to auto-detected LAN IP(s); never to localhost
+// (the phone can't reach the Mac at localhost).
+function resolveBase() {
+  if (OVERRIDE_URL) return { url: OVERRIDE_URL, kind: 'custom' };
+
+  let host = null;
+  let kind = null;
+  if (MODE === 'tailscale') {
+    host = tailscaleHostname();
+    if (host) kind = 'tailscale';
+  } else if (MODE === 'wifi') {
+    host = localHostname();
+    if (host) kind = 'local';
+  } else { // detect
+    host = tailscaleHostname();
+    if (host) kind = 'tailscale';
+    else { host = localHostname(); if (host) kind = 'local'; }
+  }
+
+  if (host) return { url: `http://${host}:${PORT}/`, kind };
+
+  // No hostname: fall back to auto-detected LAN IPv4 address(es).
+  const ips = lanAddresses();
+  if (ips.length) return { url: `http://${ips[0]}:${PORT}/`, kind: 'ip', ips };
+  return { url: null, kind: 'none' };
 }
 
 // Append the secret as the URL fragment (replacing any existing one).
@@ -374,15 +432,52 @@ server.listen(PORT, HOST, () => {
       : `\nLoaded secret from ${SECRET_FILE}`
   );
 
-  const base = baseUrl();
-  if (OVERRIDE_URL) {
+  const { url: base, kind, ips } = resolveBase();
+
+  // No address at all: the server is still listening on every interface, but
+  // there's nothing to advertise — so no QR. Tell the user how to recover.
+  if (kind === 'none') {
+    console.log('\n⚠️  Could not detect this machine\'s address.');
+    console.log('   The server is listening on all interfaces, but there is no');
+    console.log('   address to show. If you just changed networks, press Ctrl-C to');
+    console.log('   stop the server and start it again to retry. You can also set');
+    console.log(`   the address manually: node osakb.js http://<your-ip>:${PORT}/`);
+    return;
+  }
+
+  if (kind === 'custom') {
     console.log(`\nUsing custom URL (server still listens on port ${PORT}):`);
-  } else if (MODE === 'tailscale') {
+  } else if (kind === 'tailscale') {
     console.log('\nOpen on your phone (same Tailscale tailnet):');
-  } else {
+  } else if (kind === 'local') {
     console.log('\nOpen on your phone (same Wi-Fi):');
+  } else {
+    console.log('\nOpen on your phone (same LAN):');
   }
   console.log('  ' + base);
+
+  // A .local address trusts the local network. Warn — an active attacker on a
+  // compromised router can rewrite the page itself (see README › Security).
+  if (kind === 'local') {
+    console.log(
+      '\n⚠️  This is a LAN address — only safe on a network whose router you trust.\n' +
+      '   On an untrusted network it is suggested to use Tailscale.'
+    );
+  } else if (kind === 'ip') {
+    // Auto-detected raw IP — it might not be the Wi-Fi one. Help the user pick.
+    if (ips.length > 1) {
+      console.log('\n⚠️  No hostname found — auto-detected several LAN IPs. Any of these');
+      console.log('   might be the right one (the QR uses the first):');
+      for (const ip of ips) console.log(`     http://${ip}:${PORT}/`);
+      console.log('   If the QR doesn\'t work, set the right one manually as the first');
+      console.log(`   parameter: node osakb.js http://<ip>:${PORT}/`);
+    } else {
+      console.log('\n⚠️  No hostname found — this IP was auto-detected. Check that it is');
+      console.log('   your Wi-Fi address; if not, set it manually as the first parameter:');
+      console.log(`     node osakb.js http://<ip>:${PORT}/`);
+    }
+    console.log('   A LAN address is only safe on a network whose router you trust.');
+  }
 
   // QR with the secret in the #fragment — never sent to the server, but the
   // page reads it from location.hash, so scanning both opens the app and hands

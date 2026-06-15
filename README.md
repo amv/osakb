@@ -26,9 +26,10 @@
 ## Run
 
 ```sh
-node osakb.js wifi # uses Mac .local address at port 8765
-node osakb.js tailscale # uses machine hostname at port 8765
-PORT=8700 node osakb.js http://192.168.0.2:8700/ # custom
+node osakb.js           # detect (default): try tailscale first, then wifi
+node osakb.js wifi      # try onlt the Mac .local mDNS address
+node osakb.js tailscale # try only the Tailscale MagicDNS name
+PORT=8700 node osakb.js http://192.168.0.2:8700 # custom URL verbatim
 ```
 
 It prints the address to open on your phone plus a QR code to make it easier.
