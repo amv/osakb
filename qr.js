@@ -6,7 +6,7 @@
 //   * 8-bit byte mode only
 //
 // That covers any payload up to 106 bytes — comfortably more than the
-// `http://host:port/#<32-hex-secret>` URLs osakb usually encodes.
+// `http://host:port/#<32-hex-secret>` URLs this tool usually encodes.
 // Fixing the version/level/mode lets us drop every capacity table,
 // mode-selection heuristic, and the version-information block that a general
 // QR library needs. v5-L also uses a single Reed-Solomon block, so there is no

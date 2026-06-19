@@ -1,35 +1,69 @@
-# osakb — Open Source iPhone as remote **keyboard** and **trackpad** for Mac.
+# diy-mac-remote — your iPhone as a **keyboard** and **trackpad** for your Mac, built and delivered by you.
 
-1. Open your Terminal
-2. Clone this repo with git on your machine
-3. Run the server with Node.js
-4. Scan the QR code with your iPhone
-5. Grant Accessibility rights for Terminal.
-6. Use the web app to control your mac.
-7. (optional) Add as Home Screen App.
+There is **no App Store app** to install. There is **no compiled installer** for
+the backend. There never will be. Instead you get the source for both halves — a
+tiny Node server and a self-contained web app — and *you* decide how to deliver
+them onto your own machines (but we do offer easy to follow guides).
+
+That is the whole point. `diy-mac-remote` is a kit, not a product. You own the
+secret, you own the server, you own the page your phone loads. Nothing is signed
+by us, hosted by us, or phoning home to us, because there is no "us" in the loop
+once you've cloned the repo.
+
+```
+┌────────────┐        you wire this up yourself        ┌────────────┐
+│  your Mac  │  ◀── Node server (server.js) ────────   │ your iPhone│
+│ (the host) │      web app (public/index.html)  ──▶   │ (the app)  │
+└────────────┘                                          └────────────┘
+```
+
+## The DIY deal
+
+Two halves, and **you** are responsible for getting each one where it needs to go:
+
+- **The backend** is `server.js` — plain JavaScript. You run the source with Node. No other dependencies!
+- **The app** is `public/index.html` — a single self-contained web page. You load it onto your phone yourself.
+
+For each half there are several ways to do the delivery, with different
+trade-offs in trust, convenience, and reach. We'll provide a menu of those
+options and a guide for each. **Right now one path is written up below** — the
+fast, local one, but one that requires a lot of trust from your network! More guides are coming; the philosophy is that you pick the
+delivery that fits *your* threat model and *your* network, and we just hand you
+the recipes.
+
+## Requirements
+
+- macOS
+- iPhone
+- Node.js
+- This repository.
+- **Accessibility permission:** the first time it sends a key, macOS will ask to allow your Terminal *System Settings → Privacy & Security → Accessibility*. Grant it.
 
 > ⚠️ **DO NOT USE** if you do not trust your LAN network routers! The easiest
 > way to increase trust is to install [Tailscale](https://tailscale.com) on
 > your Mac and iPhone.
 > See [Security](#security) or [How it works](#how-it-works) for more info.
 
-## Requirements
+## Delivery guide: run it locally (the default DIY path)
 
-- macOS
-- iPhone
-- Git & Node.js
-- This repo - no external dependencies.
-- **Accessibility permission:** the first time it sends a key, macOS will ask to
-  allow your terminal (e.g. Terminal/iTerm) under
-  *System Settings → Privacy & Security → Accessibility*. Grant it.
+The simplest delivery method: run the server from source and load the app over
+your LAN. No build step, no signing, no store.
 
-## Run
+1. Open your Terminal.
+2. Clone this repo with git on your machine.
+3. Run the server with Node.js (see below).
+4. Scan the QR code with your iPhone.
+5. Grant Accessibility rights for Terminal.
+6. Use the web app to control your Mac.
+7. (optional) Add it to your Home Screen as a full-screen app.
+
+### Run the server
 
 ```sh
-node osakb.js           # detect (default): try tailscale first, then wifi
-node osakb.js wifi      # try onlt the Mac .local mDNS address
-node osakb.js tailscale # try only the Tailscale MagicDNS name
-PORT=8700 node osakb.js http://192.168.0.2:8700 # custom URL verbatim
+node server.js           # detect (default): try tailscale first, then wifi
+node server.js wifi      # try only the Mac .local mDNS address
+node server.js tailscale # try only the Tailscale MagicDNS name
+PORT=8700 node server.js http://192.168.0.2:8700 # custom URL verbatim
 ```
 
 It prints the address to open on your phone plus a QR code to make it easier.
@@ -37,19 +71,25 @@ It prints the address to open on your phone plus a QR code to make it easier.
 The QR (and printed link) then point at that URL with the secret appended as the
 `#fragment`.
 
-## Install on your iPhone home screen (full-screen app)
+### Deliver the app to your Home Screen (full-screen)
 
-osakb ships an app icon and web manifest, so you can add it to your home screen
-and it launches full-screen with no Safari chrome:
+`diy-mac-remote` ships an app icon and web manifest, so you can add the page to
+your Home Screen and launch it full-screen with no Safari chrome — your own
+hand-installed "app", no store required:
 
 1. Open the printed `http://<mac-ip>:8765` in **Safari** on the iPhone (must be
-   Safari — Chrome/Firefox on iOS can't add to the home screen).
+   Safari — Chrome/Firefox on iOS can't add to the Home Screen).
 2. Tap the **Share** button → **Add to Home Screen** → **Add**.
-3. Launch it from the new "osakb" icon. It opens full-screen.
+3. Launch it from the new "Mac Remote" icon. It opens full-screen.
 
 Notes:
-- Keep the Mac and phone on the same Wi-Fi or Tailscale VPN, and keep `osakb.js`
+- Keep the Mac and phone on the same Wi-Fi or Tailscale VPN, and keep `server.js`
   running in the Terminal.
+
+> **More delivery options coming.** This local path is one recipe. The roadmap is
+> a menu of others — self-hosting behind your own TLS, Tailscale-only access,
+> port-forwarding, and so on — each with its own guide, so you can choose the
+> delivery that matches the trust you have in your network.
 
 ## The keyboard
 
@@ -60,7 +100,7 @@ special keys a phone keyboard lacks.
   keyboard pops up below; whatever you type — letters, numbers, symbols, **å ä ö**,
   emoji, swipe-typed words, predictive suggestions — is sent straight to the Mac.
   This means your own layout, languages, and autocomplete, instead of a fixed
-  on-screen grid. (Soft keyboards don't emit reliable key events, so osakb reads
+  on-screen grid. (Soft keyboards don't emit reliable key events, so the app reads
   the field's edit events instead and forwards each one as a keystroke.)
 - **A special-keys bar sits above it**: ⎋ esc, ⇥ tab, the modifiers (⌘ ⌥ ⌃ ⇧),
   and a navigation row (⌫ backspace, ⌦ forward-delete, ← ↑ ↓ →, ⏎ return). These
@@ -109,9 +149,9 @@ program (all of the op's actions in one `tell application` block) and runs
 JavaScript`, because AppleScript has no clean way to move the cursor while JXA
 can call CoreGraphics (Quartz Event Services: `CGEventCreateMouseEvent` etc.).
 Spawning a JXA process per movement would be far too slow (~100 ms startup), so
-osakb keeps **one long-lived `osascript` helper** and streams newline-delimited
-JSON commands to its stdin — fast enough to feel like a real trackpad. (See
-`mouse.js`.)
+the server keeps **one long-lived `osascript` helper** and streams
+newline-delimited JSON commands to its stdin — fast enough to feel like a real
+trackpad. (See `mouse.js`.)
 
 ## HTTP API
 
@@ -139,8 +179,8 @@ op        = { "t":"k", "b": <action obj/array> }   // a keypress
           | { "t":"m", "k":"sc", "dy":<n> }             // scroll wheel
 
 pad(x)  = x + spaces, to a multiple of 256 bytes (JSON.parse ignores the spaces)
-encKey  = SHA256("osakb-enc:" + secret)
-macKey  = SHA256("osakb-mac:" + secret)
+encKey  = SHA256("diy-mac-remote-enc:" + secret)
+macKey  = SHA256("diy-mac-remote-mac:" + secret)
 ```
 
 `o` is an **array** of ops: the client coalesces keystrokes pressed within a short
@@ -150,17 +190,18 @@ order.
 
 ## Security
 
-osakb gives you **authentication, replay protection, and confidentiality** —
-everything except transport-level trust for your mobile app interface.
+`diy-mac-remote` gives you **authentication, replay protection, and
+confidentiality** — everything except transport-level trust for your mobile app
+interface.
 
 So a simple eavesdropper in LAN can **NOT** read keystrokes or replay controls,
 but if you have a compromised router in your LAN, and an Active Middle Man
 attacker in your network when your phone loads the UI from the server, the
 attacker can start operating your keyboard and mouse. You do not want that.
 
-1. **Shared secret.** Stored in `~/.osakb/secret` (auto-created, 32 hex chars,
-   owner-only perms), kept in memory while running. The phone gets it
-   **out-of-band via the QR code** osakb prints on startup, which encodes
+1. **Shared secret.** Stored in `~/.diy-mac-remote/secret` (auto-created, 32 hex
+   chars, owner-only perms), kept in memory while running. The phone gets it
+   **out-of-band via the QR code** the server prints on startup, which encodes
    `http://host.local:PORT/#<secret>`. The `#fragment` is **never sent to the
    server**, so the secret stays off the wire; the page reads it from
    `location.hash` and stores it in `localStorage`. (You can also paste it — the
@@ -193,11 +234,13 @@ ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
 **Remaining caveat:** this is application-layer crypto over plain HTTP, not TLS.
 It protects the *contents* of requests, but there's no server-certificate trust,
 so it can't stop an active man-in-the-middle who can rewrite the page itself. For
-a trusted home LAN that's fine; for stronger guarantees, run it behind TLS/VPN.
+a trusted home LAN that's fine; for stronger guarantees, run it behind TLS/VPN —
+which is exactly the kind of choice the DIY delivery menu is there to help you
+make.
 
 ## Files
 
-- `osakb.js` — HTTP server, routing, auth/crypto, static files.
+- `server.js` — HTTP server, routing, auth/crypto, static files.
 - `executor.js` — turns key actions into AppleScript and runs `osascript`.
 - `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts
   CoreGraphics mouse-move / click / scroll events.
@@ -206,12 +249,12 @@ a trusted home LAN that's fine; for stronger guarantees, run it behind TLS/VPN.
   the page so both ends interoperate).
 - `public/index.html` — the mobile web keyboard (self-contained; inlines SHA-256,
   ChaCha20, HMAC, and the UI).
-- `public/manifest.webmanifest`, `public/icon-*.png` — home-screen app metadata.
+- `public/manifest.webmanifest`, `public/icon-*.png` — Home-Screen app metadata.
 - `qr.js` — self-contained QR-code generator used to print the scan-to-connect
   QR on startup. Fixed to Version 5 / EC level L / byte mode (106 bytes max).
 
 ## License
 
-osakb is released under the [MIT License](LICENSE).
+`diy-mac-remote` is released under the [MIT License](LICENSE).
 
 This project has no third-party runtime dependencies.

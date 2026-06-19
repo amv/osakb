@@ -1,13 +1,13 @@
 {
-  "name": "osakb",
+  "name": "diy-mac-remote",
   "version": "1.0.0",
-  "description": "Zero-dependency phone-as-keyboard server for macOS (sends keypresses via osascript).",
-  "main": "osakb.js",
+  "description": "DIY, zero-dependency phone-as-keyboard-and-trackpad server for macOS (sends input via osascript). No App Store app, no installer — you wire up delivery yourself.",
+  "main": "server.js",
   "bin": {
-    "osakb": "osakb.js"
+    "diy-mac-remote": "server.js"
   },
   "scripts": {
-    "start": "node osakb.js"
+    "start": "node server.js"
   },
   "engines": {
     "node": ">=14"

@@ -1,6 +1,6 @@
 {
-  "name": "osakb remote keyboard & trackpad",
-  "short_name": "osakb",
+  "name": "DIY Mac Remote — keyboard & trackpad",
+  "short_name": "Mac Remote",
   "description": "Control your Mac from your phone: send keystrokes and use it as a trackpad.",
   "scope": "/",
   "display": "fullscreen",

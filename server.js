@@ -19,16 +19,16 @@ const HOST = process.env.HOST || '0.0.0.0';
 // appended as the #fragment, never taken from here.
 //
 // The first positional arg selects a mode:
-//   node osakb.js detect      -> auto (default): Tailscale MagicDNS name if a
+//   node server.js detect      -> auto (default): Tailscale MagicDNS name if a
 //                                tailnet is up, else the Mac .local mDNS name
-//   node osakb.js wifi        -> Mac .local mDNS hostname
-//   node osakb.js tailscale   -> Tailscale MagicDNS name (over the tailnet)
-//   node osakb.js http://host:port/   -> use this URL verbatim (custom override,
+//   node server.js wifi        -> Mac .local mDNS hostname
+//   node server.js tailscale   -> Tailscale MagicDNS name (over the tailnet)
+//   node server.js http://host:port/   -> use this URL verbatim (custom override,
 //                                e.g. a domain or port-forward)
-// Back-compat: the --url / --base-url flags and the OSAKB_URL env var still set
-// a custom override and take precedence over a mode.
+// Back-compat: the --url / --base-url flags and the DIY_MAC_REMOTE_URL env var
+// still set a custom override and take precedence over a mode.
 function parseInvocation() {
-  let url = process.env.OSAKB_URL || null;
+  let url = process.env.DIY_MAC_REMOTE_URL || null;
   let mode = null; // 'detect' | 'wifi' | 'tailscale' | null (null => 'detect')
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
@@ -45,10 +45,10 @@ function parseInvocation() {
 const { url: OVERRIDE_URL, mode: MODE } = parseInvocation();
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const SECRET_DIR = path.join(os.homedir(), '.osakb');
+const SECRET_DIR = path.join(os.homedir(), '.diy-mac-remote');
 const SECRET_FILE = path.join(SECRET_DIR, 'secret');
 
-// Load the osakb secret from ~/.osakb/secret, creating it (with a random
+// Load the shared secret from ~/.diy-mac-remote/secret, creating it (with a random
 // 32-hex-char value) on first run. Kept in memory for the process lifetime.
 // Files are created with owner-only permissions.
 function loadOrCreateSecret() {
@@ -69,14 +69,14 @@ const { secret: SECRET, created: SECRET_CREATED } = loadOrCreateSecret();
 // Derive separate subkeys for encryption and authentication (never share a key
 // between the cipher and the MAC). Both are 32 bytes.
 function sha256(data) { return crypto.createHash('sha256').update(data).digest(); }
-const ENC_KEY = sha256('osakb-enc:' + SECRET);
-const MAC_KEY = sha256('osakb-mac:' + SECRET);
+const ENC_KEY = sha256('diy-mac-remote-enc:' + SECRET);
+const MAC_KEY = sha256('diy-mac-remote-mac:' + SECRET);
 
 // ---- challenge-response auth (nonce + monotonic counter + HMAC-SHA256) ----
 //
 // Flow: client GETs /nonce, then signs every action request with
 //   HMAC-SHA256(secret, METHOD\nPATH\nNONCE\nCOUNTER\nBODY)
-// sent in the X-Osakb-* headers. The secret never travels on the wire; only the
+// sent in the request envelope. The secret never travels on the wire; only the
 // MAC does. The counter must strictly increase per nonce (replay protection),
 // and nonces are random + in-memory only, so a server restart invalidates all
 // old sessions. Nonces expire by TTL and are capped to bound memory.
@@ -422,7 +422,7 @@ function withSecret(base, secret) {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log('osakb keyboard server running.');
+  console.log('diy-mac-remote server running.');
   if (process.platform !== 'darwin') {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
   }
@@ -441,7 +441,7 @@ server.listen(PORT, HOST, () => {
     console.log('   The server is listening on all interfaces, but there is no');
     console.log('   address to show. If you just changed networks, press Ctrl-C to');
     console.log('   stop the server and start it again to retry. You can also set');
-    console.log(`   the address manually: node osakb.js http://<your-ip>:${PORT}/`);
+    console.log(`   the address manually: node server.js http://<your-ip>:${PORT}/`);
     return;
   }
 
@@ -470,11 +470,11 @@ server.listen(PORT, HOST, () => {
       console.log('   might be the right one (the QR uses the first):');
       for (const ip of ips) console.log(`     http://${ip}:${PORT}/`);
       console.log('   If the QR doesn\'t work, set the right one manually as the first');
-      console.log(`   parameter: node osakb.js http://<ip>:${PORT}/`);
+      console.log(`   parameter: node server.js http://<ip>:${PORT}/`);
     } else {
       console.log('\n⚠️  No hostname found — this IP was auto-detected. Check that it is');
       console.log('   your Wi-Fi address; if not, set it manually as the first parameter:');
-      console.log(`     node osakb.js http://<ip>:${PORT}/`);
+      console.log(`     node server.js http://<ip>:${PORT}/`);
     }
     console.log('   A LAN address is only safe on a network whose router you trust.');
   }

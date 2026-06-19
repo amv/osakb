@@ -1,7 +1,7 @@
 /*
  * Pure-JS ChaCha20 stream cipher (RFC 8439).
  *
- * Used to encrypt keystroke payloads. `crypto.subtle` is unavailable on osakb's
+ * Used to encrypt keystroke payloads. `crypto.subtle` is unavailable on the
  * plain-HTTP LAN pages, so this runs in the browser; the same file is also
  * require()d by the server so both sides use an identical, test-vector-verified
  * implementation (guaranteeing interop).
