@@ -58,7 +58,9 @@ the recipes.
 
 - macOS
 - iPhone
-- Node.js
+- Node.js — don't have it, or don't trust the one already on your machine? Run
+  [`get-node.sh`](get-node.sh) to fetch an official build and verify it against a
+  checksum pinned in this repo (see [Get a verified Node.js](#get-a-verified-nodejs)).
 - This repository.
 - **Accessibility permission:** the first time it sends a key, macOS will ask to allow your Terminal *System Settings → Privacy & Security → Accessibility*. Grant it.
 
@@ -74,11 +76,34 @@ your LAN. No build step, no signing, no store.
 
 1. Open your Terminal.
 2. Clone this repo with git on your machine.
-3. Run the server with Node.js (see below).
-4. Scan the QR code with your iPhone.
-5. Grant Accessibility rights for Terminal.
-6. Use the web app to control your Mac.
-7. (optional) Add it to your Home Screen as a full-screen app.
+3. Get Node.js — use your own, or run [`get-node.sh`](get-node.sh) (see below).
+4. Run the server with Node.js (see below).
+5. Scan the QR code with your iPhone.
+6. Grant Accessibility rights for Terminal.
+7. Use the web app to control your Mac.
+8. (optional) Add it to your Home Screen as a full-screen app.
+
+### Get a verified Node.js
+
+If you don't already have Node.js — or you'd rather not trust the copy that's on
+your machine — run the bundled script to fetch an official build and check it
+against a SHA-256 checksum **pinned in this repository**:
+
+```sh
+./get-node.sh                 # downloads, verifies, unpacks into ./node
+./node/bin/node --version     # should print v26.3.1
+```
+
+The script refuses to unpack anything unless the download's checksum matches the
+one committed here. This is on purpose, and it's stronger than trusting the
+checksum Node.js publishes alongside the download: if an attacker controlled
+nodejs.org they could serve a malicious tarball *and* a matching checksum. By
+pinning the hash in this repo, fooling you requires compromising **both**
+nodejs.org **and** this repository — the same "split your trust" idea the rest of
+`diy-mac-remote` is built on.
+
+> The script fetches the macOS Apple-Silicon (arm64) build. Once it's unpacked,
+> use `./node/bin/node server.js` in place of `node server.js` below.
 
 ### Run the server
 
@@ -263,6 +288,8 @@ make.
 
 ## Files
 
+- `get-node.sh` — fetches an official Node.js build and verifies it against a
+  SHA-256 checksum pinned in this repo before unpacking it into `./node`.
 - `server.js` — HTTP server, routing, auth/crypto, static files.
 - `executor.js` — turns key actions into AppleScript and runs `osascript`.
 - `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts

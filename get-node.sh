@@ -102,4 +102,6 @@ echo "Unpacking into ./${DEST_DIR}"
 tar -xf "$TARBALL" -C "$DEST_DIR" --strip-components=1
 
 echo "Done. Node.js ${NODE_VERSION} is in ./${DEST_DIR}"
-echo "Try it with:  ./${DEST_DIR}/bin/node --version"
+echo ""
+echo "You can now start the server with this Node:"
+echo "  ./${DEST_DIR}/bin/node server.js"
